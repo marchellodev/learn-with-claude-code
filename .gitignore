@@ -22,3 +22,6 @@ __pycache__/
 
 # Learning material and session logs stay on the learner's machine
 topics/
+
+# Obsidian vault config (if the project folder is opened as a vault)
+.obsidian/

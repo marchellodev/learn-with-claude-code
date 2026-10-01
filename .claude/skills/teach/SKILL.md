@@ -206,6 +206,20 @@ into a vault, in any Markdown reader otherwise. You do not write the log by hand
 write **for** it: your teaching messages are the lesson document. Write them as if they were the
 page, because they are.
 
+Quiz questions and answers are logged live by PreToolUse/PostToolUse hooks on `AskUserQuestion`.
+**One gap you must close yourself:** the transcript does not keep text you write *before a tool
+call in the same message*, so the hook never sees it. That is exactly where grading and the next
+lesson step usually sit (grade → teach → quiz). So before every `AskUserQuestion` that follows
+lesson text in the same message, pipe that text into the log first:
+
+```sh
+node .claude/hooks/md-log.mjs --note <<'EOF'
+<the exact Markdown you just wrote to the learner>
+EOF
+```
+
+Text that *ends* a turn is captured automatically; don't `--note` it too, or it appears twice.
+
 ### Visuals
 
 Use the `visualize` skill. Default path is a fenced mermaid block, which Obsidian renders natively.
