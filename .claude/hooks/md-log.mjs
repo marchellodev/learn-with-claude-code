@@ -137,12 +137,41 @@ function renderAnswer(resp) {
 
 // ── catch up on the transcript ─────────────────────────────────────────────
 
-let lines = [];
-if (transcript && fs.existsSync(transcript)) {
+function readLines() {
+  if (!transcript || !fs.existsSync(transcript)) return [];
   try {
-    lines = fs.readFileSync(transcript, "utf8").split(/\r?\n/).filter((l) => l.trim());
+    return fs.readFileSync(transcript, "utf8").split(/\r?\n/).filter((l) => l.trim());
   } catch {
-    lines = [];
+    return [];
+  }
+}
+
+// Has the turn's closing assistant text reached the transcript yet? Look at the last entry that
+// is a user or assistant message: done once it is assistant text.
+function turnFlushed(ls) {
+  for (let i = ls.length - 1; i >= 0; i--) {
+    let e;
+    try {
+      e = JSON.parse(ls[i]);
+    } catch {
+      continue;
+    }
+    if (e.type !== "user" && e.type !== "assistant") continue;
+    const c = e.message?.content;
+    if (e.type === "user") return false;
+    if (Array.isArray(c) && c.some((b) => b.type === "text")) return true;
+    if (Array.isArray(c) && c.some((b) => b.type === "tool_use")) return false;
+  }
+  return true;
+}
+
+// Stop fires before Claude Code has written the final assistant message, so without waiting the
+// last message of every turn would only show up one turn later.
+let lines = readLines();
+if (input.hook_event_name === "Stop") {
+  for (let n = 0; n < 40 && !turnFlushed(lines); n++) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    lines = readLines();
   }
 }
 const start = cfg.sessions[sessionId] || 0;
@@ -171,6 +200,25 @@ for (let i = start; i < lines.length; i++) {
       if (!text) continue;
       if (SKIP_USER_PREFIXES.some((p) => text.startsWith(p))) continue;
       out.push(`\n---\n\n### 🧑 ${labels.user}\n\n${text}\n`);
+    } else if (Array.isArray(c) && !c.some((b) => b.type === "tool_result")) {
+      // a prompt with attachments: text blocks plus pasted images
+      const parts = [];
+      for (const b of c) {
+        if (b.type === "text") {
+          const t = stripReminders(b.text || "").replace(/\[Image #\d+\]\s*/g, "");
+          if (!t || t.startsWith("[Image: source:")) continue;
+          if (SKIP_USER_PREFIXES.some((p) => t.startsWith(p))) continue;
+          parts.push(t);
+        } else if (b.type === "image" && b.source?.type === "base64") {
+          const ext = (b.source.media_type || "image/png").split("/")[1] || "png";
+          const name = `img-${String(e.uuid || i).slice(0, 8)}-${parts.length}.${ext}`;
+          const dir = path.join(topicDir, "viz");
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, name), Buffer.from(b.source.data, "base64"));
+          parts.push(`![[${name}]]`);
+        }
+      }
+      if (parts.length) out.push(`\n---\n\n### 🧑 ${labels.user}\n\n${parts.join("\n\n")}\n`);
     }
     continue;
   }
